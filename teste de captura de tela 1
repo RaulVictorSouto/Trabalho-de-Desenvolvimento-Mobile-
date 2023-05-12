@@ -1,0 +1,148 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { Camera } from 'expo-camera';
+import * as faceapi from 'face-api.js';
+
+export default function CameraScreen() {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [modelLoaded, setModelLoaded] = useState(false);
+  const [faces, setFaces] = useState([]);
+
+  const cameraRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      setHasPermission(status === 'granted');
+
+      // Carrega os modelos necessários para a detecção de faces
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
+        faceapi.nets.faceLandmark68Net.loadFromUri('./models'),
+      ]);
+
+      setModelLoaded(true);
+    })();
+  }, []);
+
+  const handleFacesDetected = (detections) => {
+    setFaces(detections);
+  };
+
+  const renderFaces = () => {
+    return faces.map((face, i) => (
+      <View
+        key={`face${i}`}
+        style={{
+          position: 'absolute',
+          left: face.detection.box.left,
+          top: face.detection.box.top,
+          width: face.detection.box.width,
+          height: face.detection.box.height,
+          borderWidth: 2,
+          borderColor: 'red',
+        }}
+        pointerEvents="none"
+      />
+    ));
+  };
+
+  const handleCameraReady = async () => {
+    // Obtém o tamanho da tela
+    const screenDims = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+
+    // Configura o tamanho da imagem capturada pela câmera
+    const video = cameraRef.current.getCameraStream().getVideoTracks()[0];
+    const videoDims = {
+      width: video.getSettings().width,
+      height: video.getSettings().height,
+    };
+    const dims = {
+      width: videoDims.width,
+      height: videoDims.height,
+    };
+    const aspectRatio = videoDims.width / videoDims.height;
+    if (dims.width >= dims.height) {
+      dims.width = Math.floor(dims.height * aspectRatio);
+    } else {
+      dims.height = Math.floor(dims.width / aspectRatio);
+    }
+
+    // Configura o detector de faces
+    const detectorOptions = new faceapi.TinyFaceDetectorOptions({
+      inputSize: Math.max(dims.width, dims.height),
+      scoreThreshold: 0.5,
+    });
+    const faceDetector = new faceapi.TinyFaceDetectorOptions(detectorOptions);
+
+    // Loop de detecção de faces em tempo real
+    while (true) {
+      const canvas = document.createElement('canvas');
+      canvas.width = dims.width;
+      canvas.height = dims.height;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const detections = await faceapi.detectAllFaces(canvas, faceDetector)
+        .withFaceLandmarks();
+
+      handleFacesDetected(detections);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  if (hasPermission === null) {
+    return <View />;
+  }
+  if (hasPermission === false) {
+    return <Text>No access to camera</Text>;
+  }
+  return (
+    <View style={styles.container}>
+      {modelLoaded && (
+        <Camera
+          ref={cameraRef}
+          style={styles.camera}
+          type={Camera.Constants.Type.front}
+          onCameraReady={handleCameraReady}
+        />
+      )}
+      {renderFaces()}
+      <TouchableOpacity style={styles.button}>
+        <Text style={styles.buttonText}>Capturar foto</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+    justifyContent: 'center',
+  },
+  camera: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  button: {
+    position: 'absolute',
+    bottom: 32,
+    alignSelf: 'center',
+    backgroundColor: 'white',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 32,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'black',
+  },
+});
